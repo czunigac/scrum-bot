@@ -1,0 +1,307 @@
+{
+  "name": "Scrum_Master_Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "standup",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -656,
+        -336
+      ],
+      "id": "a6655665-c8a1-41fd-b76a-e99a36777c90",
+      "name": "Webhook",
+      "webhookId": "c2301ade-2281-43b9-b2c2-e9002af7db99"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3b52409d-2a27-4c6b-a1b6-82457ec16c16",
+              "name": "memberName",
+              "value": "={{ $json.body.name }}",
+              "type": "string"
+            },
+            {
+              "id": "c5d35bef-2c39-4899-95cc-d50689adfd36",
+              "name": "yesterday",
+              "value": "={{ $json.body.yesterday }}",
+              "type": "string"
+            },
+            {
+              "id": "c02f7035-cadf-4e09-856f-f4c644c6c529",
+              "name": "today",
+              "value": "={{ $json.body.today }}",
+              "type": "string"
+            },
+            {
+              "id": "d48bdcff-4634-4a50-bbb3-0e5d21e9842e",
+              "name": "blockers",
+              "value": "={{ $json.body.blockers }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -288,
+        -336
+      ],
+      "id": "d415b97a-bf05-412d-bb9f-118c59d727de",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { memberName, yesterday, today, blockers } = $input.first().json;\n\nif (!memberName || !yesterday || !today) {\n  throw new Error('Missing required standup fields');\n}\n\nconst hasBlockers = blockers &&\n  blockers.toLowerCase() !== 'no' &&\n  blockers.toLowerCase() !== 'none' &&\n  blockers.trim() !== '';\n\nreturn [{\n  json: {\n    memberName,\n    yesterday,\n    today,\n    blockers: blockers || 'None',\n    hasBlockers,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        -336
+      ],
+      "id": "a5d37662-8dba-499a-a612-f681f00c805a",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a Scrum Master assistant. Given a team member's standup update, produce a concise professional summary.\\n\\nRespond ONLY with this exact JSON structure, no markdown, no code blocks:\\n{\\n  \\\"summary\\\": \\\"2-3 sentence professional summary\\\",\\n  \\\"status\\\": \\\"on-track | blocked | at-risk\\\",\\n  \\\"keyPoints\\\": [\\\"point 1\\\", \\\"point 2\\\"],\\n  \\\"blockerAlert\\\": \\\"description if blocked, null if not\\\"\\n}\\n\\nAlways respond in the same language as the input.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Team member: {{ $json.memberName }}\\nYesterday: {{ $json.yesterday }}\\nToday: {{ $json.today }}\\nBlockers: {{ $json.blockers }}\"\n    }\n  ],\n  \"temperature\": 0.3\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        32,
+        -336
+      ],
+      "id": "533110fc-f1e3-42a5-8110-64cd46ce7a92",
+      "name": "HTTP Request",
+      "alwaysOutputData": false,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PglSypl7ox33p4Fh",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// OpenAI devuelve choices, pero el nodo anterior puede tener otros campos\n// Intenta leer de diferentes fuentes\nlet aiContent = input.choices?.[0]?.message?.content || '';\naiContent = aiContent.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\nconst ai = JSON.parse(aiContent);\n\n// Leer memberName del contexto del workflow via $('NombreNodo')\n// Primero verifica qué nodos están disponibles:\nconst allNodes = Object.keys($input);\nconsole.log('Available:', JSON.stringify(allNodes));\n\nconst statusEmoji = {\n  'on-track':  '✅',\n  'blocked':   '🚫',\n  'at-risk':   '⚠️'\n};\n\nconst emoji = statusEmoji[ai.status] || '✅';\n\nconst slackBlocks = [\n  {\n    type: \"header\",\n    text: {\n      type: \"plain_text\",\n      text: `${emoji} Standup — ${input.memberName}`\n    }\n  },\n  {\n    type: \"section\",\n    fields: [\n      { type: \"mrkdwn\", text: `*Status:*\\n${ai.status.toUpperCase()}` },\n      { type: \"mrkdwn\", text: `*Time:*\\n<!date^${Math.floor(Date.now()/1000)}^{time}|now>` }\n    ]\n  },\n  {\n    type: \"section\",\n    text: { type: \"mrkdwn\", text: `*Summary:*\\n${ai.summary}` }\n  },\n  {\n    type: \"section\",\n    text: {\n      type: \"mrkdwn\",\n      text: `*Key points:*\\n${ai.keyPoints.map(p => `• ${p}`).join('\\n')}`\n    }\n  },\n  { type: \"divider\" }\n];\n\nreturn [{\n  json: {\n    memberName: input.memberName,\n    status: ai.status,\n    hasBlocker: !!ai.blockerAlert,\n    blockerAlert: ai.blockerAlert,\n    slackBlocks,\n    slackText: `${emoji} Standup from ${input.memberName}: ${ai.summary}`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        -128
+      ],
+      "id": "b9fff386-bce1-4453-bdc8-69c04ab45334",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "027bfb87-029d-4ed4-ade5-e85d5485dc44",
+              "leftValue": "={{ $json.hasBlocker }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -288,
+        -128
+      ],
+      "id": "661295cf-955c-475b-9ab2-e51a8fc40495",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#scrum-alerts"
+        },
+        "text": "=🚨 *BLOCKER ALERT* — {{ $json.memberName }}\n\n*Blocker:* {{ $json.blockerAlert }}\n\n_Immediate Scrum Master attention required._",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -80,
+        -144
+      ],
+      "id": "e473bff1-d25a-4e03-af67-6071ffe8e700",
+      "name": "Send a message",
+      "webhookId": "3877d4af-063a-4bb1-9e41-1c3bcc49ae9b",
+      "credentials": {
+        "slackApi": {
+          "id": "4P1dXmIUU1ivw3kN",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#standups",
+          "mode": "name"
+        },
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -112,
+        176
+      ],
+      "id": "17d8b8aa-825c-45ff-b04b-46eb4a4d7739",
+      "name": "Send a message1",
+      "webhookId": "59afe53d-ef5f-488b-b55e-74c01b553e9d",
+      "credentials": {
+        "slackApi": {
+          "id": "4P1dXmIUU1ivw3kN",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message1": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "55ea37e9-667e-4137-b0dd-f7f26afebfdb",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0ad5166027c7ec82a25a1b10eb6a2dd55b176f388758d17d032eabe875735b18"
+  },
+  "id": "POsiQGgf9DLY34SK",
+  "tags": []
+}
