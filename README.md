@@ -24,6 +24,24 @@ Webhook → Edit Fields → Code (validate) → HTTP Request (OpenAI)
       → true:  Slack #scrum-alerts + Slack #standups
       → false: Slack #standups
 
+The diagram below mirrors the exported workflow in `flows/Scrum_Master_Bot.json` (node names and edges as in n8n).
+
+```mermaid
+flowchart TD
+  Webhook["Webhook\nPOST /webhook/standup"]
+  EditFields["Edit Fields\nmap body → memberName, yesterday, today, blockers"]
+  Validate["Code in JavaScript\nvalidate fields, derive hasBlockers"]
+  OpenAI["HTTP Request\nOpenAI chat completions (gpt-4o-mini)"]
+  Format["Code in JavaScript1\nparse JSON, build Slack payload, hasBlocker"]
+  Branch{"If\nhasBlocker is true?"}
+  Alert["Send a message\n#scrum-alerts"]
+  Report["Send a message1\n#standups"]
+
+  Webhook --> EditFields --> Validate --> OpenAI --> Format --> Branch
+  Branch -->|yes| Alert --> Report
+  Branch -->|no| Report
+```
+
 Total nodes: 8
 Trigger: HTTP Webhook (POST)
 AI model: gpt-4o-mini
